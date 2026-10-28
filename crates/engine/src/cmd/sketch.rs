@@ -2792,32 +2792,52 @@ fn arc_len(sk: &Sketch, c: usize) -> Option<f64> {
 }
 
 /// Whether two arcs are the two caps of a straight slot: each shares its end points with the same
-/// two lines (the slot's sides). The distance between them is then the slot's overall length, not
-/// the gap between their inner edges (#7464).
+/// two lines (the slot's sides), and those sides are tangent to both caps. The distance between
+/// the caps is then the slot's overall length, not the gap between their inner edges (#7464).
 fn slot_caps(sk: &Sketch, a: usize, b: usize) -> bool {
     if a == b {
         return false;
     }
-    let ends = |c: usize| match sk.curves.get(c).map(|x| &x.kind) {
-        Some(CurveKind::Arc { a, b, .. }) => Some((*a, *b)),
+    let arc = |c: usize| match sk.curves.get(c).map(|x| &x.kind) {
+        Some(CurveKind::Arc { c, a, b }) => sk.point(*c).map(|centre| (centre, *a, *b)),
         _ => None,
     };
-    let (Some((a0, a1)), Some((b0, b1))) = (ends(a), ends(b)) else {
+    let (Some((ca, a0, a1)), Some((cb, b0, b1))) = (arc(a), arc(b)) else {
         return false;
     };
-    // Count the lines that run between the two arcs: each shares one end with each arc.
-    let sides = sk
-        .curves
-        .iter()
-        .filter(|c| match &c.kind {
-            CurveKind::Line { a: la, b: lb } => {
-                let touches = |p: usize, q: usize| p == *la || p == *lb || q == *la || q == *lb;
-                touches(a0, a1) && touches(b0, b1)
-            }
-            _ => false,
-        })
-        .count();
+    // Count the sides that run between the two caps and are tangent to both. Tangency keeps two
+    // arcs joined by two lines but bulging inward out of it: for those, centre distance plus both
+    // radii is not the overall length.
+    let mut sides = 0;
+    for c in &sk.curves {
+        let CurveKind::Line { a: la, b: lb } = &c.kind else {
+            continue;
+        };
+        let on = |p: &usize, (x, y): (usize, usize)| *p == x || *p == y;
+        let (pa, pb) = if on(la, (a0, a1)) && on(lb, (b0, b1)) {
+            (*la, *lb)
+        } else if on(lb, (a0, a1)) && on(la, (b0, b1)) {
+            (*lb, *la)
+        } else {
+            continue;
+        };
+        if tangent_at(sk, pa, pb, ca) && tangent_at(sk, pb, pa, cb) {
+            sides += 1;
+        }
+    }
     sides >= 2
+}
+
+/// Whether the line from `p` to `q` is tangent to the circle about `centre` at `p`: its direction
+/// is perpendicular to the radius from `centre` to `p`.
+fn tangent_at(sk: &Sketch, p: usize, q: usize, centre: Vec2) -> bool {
+    let (Some(p), Some(q)) = (sk.point(p), sk.point(q)) else {
+        return false;
+    };
+    match ((q - p).normalized(), (p - centre).normalized()) {
+        (Some(d), Some(r)) => d.dot(r).abs() < 1e-9,
+        _ => false,
+    }
 }
 
 /// The angle dimension between two lines whose sector contains `t` (the text position): returns

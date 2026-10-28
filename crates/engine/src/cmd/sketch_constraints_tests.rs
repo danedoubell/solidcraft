@@ -1447,3 +1447,23 @@ fn slot_caps_dimension_is_the_overall_length() {
     let d = run(&mut s, "sketch.dimension", json!({"entities": [c1, c2], "driven": true}));
     assert!((d["measured"].as_f64().unwrap() - 20.0).abs() < 1e-6, "{d}");
 }
+
+/// Two arcs joined by two lines but bulging inward are not a slot's caps: their distance stays
+/// the gap between the edges, not an overall length.
+#[test]
+fn inward_bulging_arc_pairs_keep_the_gap_dimension() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "ids": ["l1"]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 10], [40, 10]], "ids": ["l2"]}));
+    run(&mut s, "sketch.arc.three_point", json!({"start": "l1.start", "through": [3, 5], "end": "l2.start", "id": "ca"}));
+    run(&mut s, "sketch.arc.three_point", json!({"start": "l1.end", "through": [37, 5], "end": "l2.end", "id": "cb"}));
+    let d = run(&mut s, "sketch.dimension", json!({"entities": ["ca", "cb"], "driven": true}));
+    // The shape spans x 0..40; the gap between the inward edges is 34 mm, not an overall length.
+    assert!((d["measured"].as_f64().unwrap() - 34.0).abs() < 1e-6, "{d}");
+    let sk = sketch(&s);
+    assert!(
+        sk.constraints.iter().any(|c| matches!(c.kind, ConstraintKind::CircleCircleDistance { .. })),
+        "{:?}",
+        sk.constraints.iter().map(|c| &c.kind).collect::<Vec<_>>()
+    );
+}
